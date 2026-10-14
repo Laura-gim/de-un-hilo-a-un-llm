@@ -1,0 +1,4 @@
+# Binarios compilados (se generan con "make", no hace falta versionarlos)
+hito1-cpu/secuencial
+hito1-cpu/paralelo
+hito1-cpu/benchmark
