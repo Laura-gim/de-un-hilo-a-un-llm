@@ -1,6 +1,7 @@
 import time
 import sys
 import threading
+import numpy as np
 from comun import crear_vector, validar_suma
 
 def worker_bloque(vector, inicio_bloque, fin_bloque, modo, id_hilo, resultados, idx):

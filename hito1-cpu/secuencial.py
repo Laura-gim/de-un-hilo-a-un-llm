@@ -1,5 +1,6 @@
 import time
 import sys
+import numpy as np
 from comun import crear_vector, validar_suma
 
 def sumar_secuencial(vector, modo="numpy"):
