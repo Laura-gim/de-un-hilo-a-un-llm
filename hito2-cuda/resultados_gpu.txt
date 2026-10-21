@@ -1,0 +1,22 @@
+==============================================================================
+ HITO 2: Benchmark CPU vs. GPU ingenua vs. GPU optimizada
+ GPU: Tesla T4 (compute capability 7.5), Numba 0.61.2
+ Repeticiones: 9 (mediana, calentamiento descartado) | Hilos/bloque: 256
+==============================================================================
+         N |   CPU ms | ingenuo ms | optim. ms | opt/ing | opt/CPU | GB/s ing | GB/s opt |  H2D ms | check
+----------------------------------------------------------------------------------------------------------
+   1048576 |    0.640 |      3.608 |     0.111 |   32.6x |   5.78x |      1.2 |     37.8 |   1.315 | OK/OK
+   4194304 |    2.680 |     14.274 |     0.287 |   49.8x |   9.35x |      1.2 |     58.6 |   3.741 | OK/OK
+  16777216 |   12.056 |     33.282 |     0.624 |   53.4x |  19.34x |      2.0 |    107.6 |  15.320 | OK/OK
+
+-> escrito resultados_gpu.csv
+   opt_total_ms = kernel + copia de parciales + suma final en el host (sin H2D).
+
+Barrido de hilos por bloque (kernel optimizado, N = 16777216)
+hilos/bloque |  bloques | kernel ms |    GB/s | check
+         128 |   131072 |     0.598 |   112.2 | OK
+         256 |    65536 |     0.639 |   105.0 | OK
+         512 |    32768 |     0.703 |    95.5 | OK
+-> escrito resultados_threads.csv
+
+Benchmark completado.
