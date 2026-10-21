@@ -1,10 +1,10 @@
 # Hito 2 — Kernels CUDA optimizados (Versión Python / Numba)
 
-**Materia:** Programación Concurrente y Paralela  
-**Integrantes:** Laura & Gabriel  
+**Materia:** Programación Concurrente  
+**Integrantes:** Laura Elizabeth Giménez y Oscar Gabriel Sosa  
 **Repositorio:** [de-un-hilo-a-un-llm](https://github.com/Laura-gim/de-un-hilo-a-un-llm.git)
 
-> **Estado de esta entrega:** el código está completo y su **lógica se verificó en CPU** con un emulador de CUDA (N chicos, tamaños de bloque 32–256, N que no es múltiplo del bloque). **Todavía no se corrió en una GPU real**: las tablas de la sección 5 y el análisis de la sección 7 están marcados con `COMPLETAR` y se rellenan **solo con datos medidos en Colab**. No hay ningún número de GPU inventado en este archivo.
+> **Estado:** código completo. Pendiente: correr los scripts en Colab con GPU y completar las secciones 5, 6 y 7 con los datos medidos.
 
 ---
 
@@ -51,9 +51,9 @@ La validación es la del Hito 1 (`validar_suma`): la suma debe ser $N$ con toler
 
 ---
 
-## 5. Resultados (**COMPLETAR con la salida de `benchmark_gpu.py` en Colab**)
+## 5. Resultados (pendiente: salida de `benchmark_gpu.py` en Colab)
 
-**Hardware:** GPU `COMPLETAR` (compute capability `COMPLETAR`), CPU de Colab `COMPLETAR`, Python `COMPLETAR`, Numba `COMPLETAR`. Repeticiones: `COMPLETAR` (mediana, calentamiento descartado).  
+**Hardware:** GPU _pendiente_ (compute capability _pendiente_), CPU de Colab _pendiente_, Python _pendiente_, Numba _pendiente_. Repeticiones: _pendiente_ (mediana, calentamiento descartado).  
 **Comando:** `python benchmark_gpu.py --reps 9`
 
 | $N$ | CPU (ms) | GPU ingenua (ms) | GPU optimizada (ms) | opt / ingenua | opt / CPU (kernel) | GB/s ingenua | GB/s optimizada | H2D (ms) | Checksum |
@@ -74,7 +74,7 @@ Salidas completas: `resultados_gpu.txt`, `resultados_gpu.csv`, `resultados_threa
 
 ---
 
-## 6. Perfilado con Nsight Compute (**COMPLETAR o declarar la limitación**)
+## 6. Perfilado con Nsight Compute (pendiente)
 
 Se intenta perfilar **ambos** kernels (celda 8 del notebook):
 
@@ -95,15 +95,15 @@ Si `ncu` no está disponible o Colab no da permisos, se pega **el mensaje de err
 
 ---
 
-## 7. Análisis (**COMPLETAR contrastando con los datos medidos**)
+## 7. Análisis (pendiente: contrastar con los datos medidos)
 
-Las siguientes son las **hipótesis** que el informe debe confirmar o contradecir con los números de la sección 5; si los datos dicen otra cosa, se explica por qué.
+Hipótesis a confirmar o contradecir con los números de la sección 5; si los datos dicen otra cosa, se explica por qué.
 
-1. **Serialización del `atomicAdd`.** Todos los hilos actualizan la misma dirección: se espera que el ingenuo sea el más lento y que su ancho de banda efectivo quede **muy por debajo** del pico de la GPU. `COMPLETAR`: ¿cuánto más lento fue (opt / ingenua)? ¿Crece o se mantiene al aumentar $N$?
-2. **Reducción en árbol + memoria compartida.** Se espera que el optimizado se acerque al límite de **ancho de banda de memoria**: la suma es *memory-bound* (4 bytes leídos por cada suma), como ya se vio en el Hito 1 con la RAM. `COMPLETAR`: GB/s alcanzados frente al pico de la GPU declarada.
-3. **CPU vs. GPU.** Comparar el tiempo del kernel contra la CPU, y también **incluyendo la copia H2D**: ¿la GPU gana si hay que copiar el vector? `COMPLETAR` con la columna `H2D` y `opt_total`.
-4. **Tamaño de bloque.** ¿Cambia el rendimiento entre 128, 256 y 512 hilos por bloque? Relacionar con ocupación (warps activos por SM). `COMPLETAR`.
-5. **Precisión `float32` para $N > 2^{24}$** (sección 3): ¿saturó el ingenuo? `COMPLETAR`.
+1. **Serialización del `atomicAdd`.** Todos los hilos actualizan la misma dirección: se espera que el ingenuo sea el más lento y que su ancho de banda efectivo quede **muy por debajo** del pico de la GPU. _pendiente_: ¿cuánto más lento fue (opt / ingenua)? ¿Crece o se mantiene al aumentar $N$?
+2. **Reducción en árbol + memoria compartida.** Se espera que el optimizado se acerque al límite de **ancho de banda de memoria**: la suma es *memory-bound* (4 bytes leídos por cada suma), como ya se vio en el Hito 1 con la RAM. _pendiente_: GB/s alcanzados frente al pico de la GPU declarada.
+3. **CPU vs. GPU.** Comparar el tiempo del kernel contra la CPU, y también **incluyendo la copia H2D**: ¿la GPU gana si hay que copiar el vector? _pendiente_ con la columna `H2D` y `opt_total`.
+4. **Tamaño de bloque.** ¿Cambia el rendimiento entre 128, 256 y 512 hilos por bloque? Relacionar con ocupación (warps activos por SM). _pendiente_.
+5. **Precisión `float32` para $N > 2^{24}$** (sección 3): ¿saturó el ingenuo? _pendiente_.
 6. **Conexión teórica:** modelo SIMT y warps (Clase 5), jerarquía de memoria y coalescencia (Clase 6), patrón de reducción (Clase 7).
 
 ---
@@ -152,7 +152,7 @@ python graficar_gpu.py resultados_gpu.csv speedup_gpu.png
 
 ## 10. Criterio de "listo"
 
-- [x] Ambas versiones implementadas y validadas con `validar_suma` en el emulador de CPU.
+- [x] Ambas versiones implementadas y verificadas con `validar_suma` con tamaños chicos en CPU (simulador).
 - [x] Técnica visible en el código optimizado (memoria compartida + árbol + carga coalescida).
 - [ ] Corrida en GPU real: ambas versiones con `Checksum Válido: SÍ`.
 - [ ] Tabla de tiempos propia (sección 5) con GPU y versión de Numba declaradas.
