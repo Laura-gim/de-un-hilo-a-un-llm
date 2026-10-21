@@ -4,8 +4,6 @@
 **Integrantes:** Laura Elizabeth Giménez y Oscar Gabriel Sosa  
 **Repositorio:** [de-un-hilo-a-un-llm](https://github.com/Laura-gim/de-un-hilo-a-un-llm.git)
 
-> **Estado:** código completo. Pendiente: correr los scripts en Colab con GPU y completar las secciones 5, 6 y 7 con los datos medidos.
-
 ---
 
 ## 1. Objetivo y Diseño
@@ -25,18 +23,18 @@ Componentes:
 El kernel optimizado (`reduce_shared` en `kernels.py`) tiene tres pasos, cada uno ligado a un concepto de clase:
 
 1. **Carga coalescida a memoria compartida (Clase 6).** El hilo `i` lee `x[i]`: hilos consecutivos de un warp leen direcciones consecutivas, así que el hardware junta las lecturas en pocas transacciones. Los hilos de borde ($i \ge N$) aportan 0.
-2. **Reducción en árbol (Clase 7).** En cada paso, la mitad de los hilos suma otra posición de `shared`: `stride` empieza en `hilos_por_bloque / 2` y se divide por 2 hasta llegar a 1, con `cuda.syncthreads()` entre pasos. Con 256 hilos son $\log_2 256 = 8$ pasos, en cada uno trabajan $128, 64, 32, \dots$ hilos: es **paralelo de verdad** (un `for` serial en el hilo 0 no lo sería).
+2. **Reducción en árbol (Clase 7).** En cada paso, la mitad de los hilos suma otra posición de `shared`: `stride` empieza en `hilos_por_bloque / 2` y se divide por 2 hasta llegar a 1, con `cuda.syncthreads()` entre pasos. Con 256 hilos son $\log_2 256 = 8$ pasos; en cada uno trabajan $128, 64, 32, \dots$ hilos: es **paralelo de verdad** (un `for` serial en el hilo 0 no lo sería).
 3. **Un parcial por bloque.** El hilo 0 escribe el total del bloque en `parcial[bloque]`; el host suma los parciales (uno cada 256 elementos) en `float64`.
 
-Con esto, los $N$ accesos a memoria global del baseline pasan de competir por una dirección a ser **lecturas independientes y coalescidas**, y la serialización queda reducida a los pasos del árbol dentro de un bloque.
+Con esto, los accesos a memoria global dejan de competir por una única dirección y pasan a ser **lecturas independientes y coalescidas**; la serialización queda limitada a los pasos del árbol dentro de un bloque.
 
 ---
 
 ## 3. Corrección y precisión
 
-La validación es la del Hito 1 (`validar_suma`): la suma debe ser $N$ con tolerancia $10^{-6} \cdot N$. Se acumula en `float32` dentro de la GPU (el tipo que usan los kernels) y en `float64` en el host.
+La validación es la del Hito 1 (`validar_suma`): la suma debe ser $N$ con tolerancia $10^{-6} \cdot N$. Dentro de la GPU se acumula en `float32` (el tipo de los kernels) y en el host en `float64`.
 
-**Detalle de precisión que hay que verificar en Colab:** en `float32` los enteros solo son exactos hasta $2^{24} = 16\,777\,216$; sumar $1.0$ a un acumulador que ya vale $2^{24}$ se redondea y **no cambia su valor**. Por eso, para $N > 2^{24}$ se espera que el acumulador único del kernel ingenuo **sature** en $16\,777\,216$ y el resultado sea incorrecto, mientras que el optimizado (parciales de a 256 elementos, suma final en `float64`) siga correcto. Esta es una **hipótesis** que prueba la celda 7 del notebook (`python kernel_ingenuo.py 33554432`); lo que ocurra se documenta en la sección 7.
+**Resultado medido con $N = 2^{25}$ (33 554 432):** el kernel ingenuo devolvió `16 777 216` (esperado `33 554 432`, `Checksum Válido: NO`), mientras que el optimizado devolvió `33 554 432` (`Checksum Válido: SÍ`). Es consecuencia de la precisión de `float32`: los enteros solo son exactos hasta $2^{24} = 16\,777\,216$, y sumar $1.0$ a un acumulador que ya vale $2^{24}$ no lo modifica; por eso el acumulador único del ingenuo **se satura**. El optimizado no sufre el problema porque cada bloque suma solo 256 elementos en `float32` y el total se junta en `float64`. Con $N \le 2^{24}$ (los tamaños del benchmark) ambos kernels dan el resultado exacto.
 
 ---
 
@@ -44,86 +42,90 @@ La validación es la del Hito 1 (`validar_suma`): la suma debe ser $N$ con toler
 
 - **Tiempo del kernel con `cuda.event`**, no con el reloj de CPU: los lanzamientos de kernels son asincrónicos y `perf_counter` mediría solo el lanzamiento.
 - **Calentamiento descartado:** la primera llamada de Numba **compila (JIT)** el kernel; se descarta una corrida antes de medir.
-- **Mediana** de las repeticiones (7 por defecto), igual que el Hito 1. Para el ingenuo, el acumulador se pone en cero **antes** de iniciar el cronómetro.
-- **Transferencias aparte:** `H2D` es la copia host→device del vector; `opt_total` incluye kernel + copia de parciales + suma final en el host. Se reportan por separado porque una GPU “rápida” puede perder frente a la CPU si hay que copiar los datos.
-- **Ancho de banda efectivo:** $GB/s = \dfrac{4 \cdot N\ \text{bytes}}{t}$ (cada elemento `float32` se lee al menos una vez). Se compara con el pico de la GPU declarada.
-- Referencia de CPU: el mismo `np.sum(x, dtype=np.float64)` del `secuencial.py` del Hito 1, **medido en la misma sesión** (el Hito 1 midió $T_{seq} \approx 13.850\ \text{ms}$ para $N = 2^{24}$ en Colab; se vuelve a medir para comparar en igualdad de condiciones).
+- **Mediana** de 9 repeticiones, igual que el Hito 1. Para el ingenuo, el acumulador se pone en cero **antes** de iniciar el cronómetro.
+- **Transferencias aparte:** `H2D` es la copia host→device del vector. Se reporta por separado porque una GPU rápida puede no convenir si hay que copiar los datos.
+- **Ancho de banda efectivo:** $GB/s = \dfrac{4 \cdot N\ \text{bytes}}{t}$ (cada elemento `float32` se lee al menos una vez).
+- **Referencia de CPU:** el mismo `np.sum(x, dtype=np.float64)` del `secuencial.py` del Hito 1, **medido en la misma sesión** de Colab.
+- Las columnas *opt/ing* y *opt/CPU* son cocientes de tiempos de **kernel** (sin copia).
 
 ---
 
-## 5. Resultados (pendiente: salida de `benchmark_gpu.py` en Colab)
+## 5. Resultados
 
-**Hardware:** GPU _pendiente_ (compute capability _pendiente_), CPU de Colab _pendiente_, Python _pendiente_, Numba _pendiente_. Repeticiones: _pendiente_ (mediana, calentamiento descartado).  
+**Hardware y entorno (2026-10-21, Google Colab):** GPU Tesla T4 (compute capability 7.5, 15 360 MiB), driver 580.82.07, CUDA 13.0; Python 3.13; Numba 0.61.2 (soporte CUDA de `numba_cuda`). Repeticiones: 9 (mediana, calentamiento descartado), 256 hilos por bloque.  
 **Comando:** `python benchmark_gpu.py --reps 9`
 
 | $N$ | CPU (ms) | GPU ingenua (ms) | GPU optimizada (ms) | opt / ingenua | opt / CPU (kernel) | GB/s ingenua | GB/s optimizada | H2D (ms) | Checksum |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| $2^{20}$ | | | | | | | | | |
-| $2^{22}$ | | | | | | | | | |
-| $2^{24}$ | | | | | | | | | |
+| $2^{20}$ | 0.640 | 3.608 | 0.111 | 32.6× | 5.78× | 1.2 | 37.8 | 1.315 | OK/OK |
+| $2^{22}$ | 2.680 | 14.274 | 0.287 | 49.8× | 9.35× | 1.2 | 58.6 | 3.741 | OK/OK |
+| $2^{24}$ | 12.056 | 33.282 | 0.624 | 53.4× | 19.34× | 2.0 | 107.6 | 15.320 | OK/OK |
 
 **Barrido de hilos por bloque** (kernel optimizado, $N = 2^{24}$):
 
 | Hilos/bloque | Bloques | Kernel (ms) | GB/s | Checksum |
 | :---: | :---: | :---: | :---: | :---: |
-| 128 | | | | |
-| 256 | | | | |
-| 512 | | | | |
+| 128 | 131 072 | 0.598 | 112.2 | OK |
+| 256 | 65 536 | 0.639 | 105.0 | OK |
+| 512 | 32 768 | 0.703 | 95.5 | OK |
+
+Otras corridas de referencia ($N = 2^{24}$, scripts por separado, mediana de 7): ingenuo 36.147 ms, optimizado 1.342 ms. El optimizado tardó más que en el benchmark (0.624 ms) porque el script suelto arranca con la GPU "en frío"; para comparar se usan los valores del benchmark, que incluyen calentamiento. Hay variación entre corridas (el mismo caso de 256 hilos dio 0.624 ms y 0.639 ms dentro de la misma ejecución).
 
 Salidas completas: `resultados_gpu.txt`, `resultados_gpu.csv`, `resultados_threads.csv`. Gráfico: `speedup_gpu.png`.
 
 ---
 
-## 6. Perfilado con Nsight Compute (pendiente)
+## 6. Perfilado con Nsight Compute
 
-Se intenta perfilar **ambos** kernels (celda 8 del notebook):
+Comandos (Nsight Compute 2025.3.1, $N = 2^{24}$, una sola corrida del kernel):
 
 ```bash
-ncu --set full -o ingenuo    python kernel_ingenuo.py 16777216
-ncu --set full -o optimizado python kernel_optimizado.py 16777216
+ncu --set basic -k regex:suma_atomica  --launch-count 1 -o ingenuo    python kernel_ingenuo.py 16777216 1
+ncu --set full  -k regex:reduce_shared --launch-count 1 -o optimizado python kernel_optimizado.py 16777216 1
+ncu --import <reporte>.ncu-rep --page details
 ```
 
-Numba compila en la primera llamada, por lo que `ncu` también verá la corrida de calentamiento: mirar los kernels `suma_atomica` y `reduce_shared`.
+El primer intento con `--set full` sobre el kernel ingenuo se interrumpió antes de terminar, por lo que se volvió a correr con el conjunto `basic` (el kernel optimizado sí se perfiló con `full`). Reportes: `ingenuo.ncu-rep`, `optimizado.ncu-rep`.
 
 | Métrica | Ingenua | Optimizada |
 | :--- | :---: | :---: |
-| Tiempo del kernel (`gpu__time_duration`) | | |
-| Ocupación (`sm__warps_active`) | | |
-| Throughput de memoria (% del pico) | | |
+| Duración (bajo ncu) | 58.87 ms | 1.52 ms |
+| Memory Throughput | 2.06 % | 83.51 % |
+| DRAM Throughput | 0.51 % | 19.32 % (61.76 GB/s) |
+| Compute (SM) Throughput | 1.22 % | 83.51 % |
+| Ocupación teórica | 100 % | 100 % |
+| Ocupación lograda | 87.63 % | 88.72 % |
 
-Si `ncu` no está disponible o Colab no da permisos, se pega **el mensaje de error** acá y se usa como alternativa el tiempo de `cuda.event` y el ancho de banda efectivo calculado a mano (sección 4): **limitación declarada** (Clase 7).
+Las duraciones bajo `ncu` son mayores que las medidas con `cuda.event` porque el perfilador fija los relojes de la GPU; por eso los tiempos de comparación son los de la sección 5 y estas métricas se usan para ver **dónde está el cuello de botella**. Con el 19.32 % de DRAM = 61.76 GB/s, el pico de memoria de esta T4 es de unos 320 GB/s.
 
 ---
 
-## 7. Análisis (pendiente: contrastar con los datos medidos)
+## 7. Análisis
 
-Hipótesis a confirmar o contradecir con los números de la sección 5; si los datos dicen otra cosa, se explica por qué.
-
-1. **Serialización del `atomicAdd`.** Todos los hilos actualizan la misma dirección: se espera que el ingenuo sea el más lento y que su ancho de banda efectivo quede **muy por debajo** del pico de la GPU. _pendiente_: ¿cuánto más lento fue (opt / ingenua)? ¿Crece o se mantiene al aumentar $N$?
-2. **Reducción en árbol + memoria compartida.** Se espera que el optimizado se acerque al límite de **ancho de banda de memoria**: la suma es *memory-bound* (4 bytes leídos por cada suma), como ya se vio en el Hito 1 con la RAM. _pendiente_: GB/s alcanzados frente al pico de la GPU declarada.
-3. **CPU vs. GPU.** Comparar el tiempo del kernel contra la CPU, y también **incluyendo la copia H2D**: ¿la GPU gana si hay que copiar el vector? _pendiente_ con la columna `H2D` y `opt_total`.
-4. **Tamaño de bloque.** ¿Cambia el rendimiento entre 128, 256 y 512 hilos por bloque? Relacionar con ocupación (warps activos por SM). _pendiente_.
-5. **Precisión `float32` para $N > 2^{24}$** (sección 3): ¿saturó el ingenuo? _pendiente_.
-6. **Conexión teórica:** modelo SIMT y warps (Clase 5), jerarquía de memoria y coalescencia (Clase 6), patrón de reducción (Clase 7).
+1. **El `atomicAdd` sobre una única dirección serializa.** El ingenuo es de 32× a 53× más lento que el optimizado, y la diferencia crece con $N$ (32.6× → 49.8× → 53.4×). Su ancho de banda efectivo queda en 1.2–2.0 GB/s, muy por debajo del pico (~320 GB/s). Con `ncu`, el kernel ingenuo usa solo el 2 % de la memoria y el 1.2 % del cómputo, **aunque su ocupación es alta (87.6 %)**: hay muchos warps residentes, pero están esperando su turno para actualizar la misma dirección. El problema no es falta de hilos sino la contención.
+2. **El optimizado aprovecha mucho mejor la GPU.** Alcanza 107.6 GB/s con $N = 2^{24}$ (alrededor de un tercio del pico) y su ancho de banda sube con $N$ (37.8 → 58.6 → 107.6 GB/s): con tamaños chicos pesan más los costos fijos de lanzar el kernel. Según `ncu`, no está limitado por la DRAM (19.3 %) sino que sus unidades de memoria on-chip y de cómputo están al 83.5 %. **Hipótesis (no verificada con más métricas):** el cuello de botella es el trabajo dentro del bloque —escrituras y lecturas en memoria compartida y `syncthreads` del árbol—. Una mejora posible, que no se probó, es que cada hilo sume varios elementos en un registro antes de entrar al árbol.
+3. **CPU vs. GPU.** Solo con el kernel, la GPU optimizada es 19.3× más rápida que la CPU con $N = 2^{24}$ (0.624 vs. 12.056 ms). Pero copiar el vector a la GPU tarda 15.320 ms: **más que sumarlo en la CPU**. El tiempo total del optimizado (kernel + copia de parciales + suma final en el host) es 0.819 ms; sumándole la copia del vector da ≈ 16.1 ms contra 12.1 ms de la CPU. Para una suma aislada no conviene mover los datos; la GPU se justifica cuando los datos ya están en ella o se hace mucho más cómputo por dato. (Una copia desde memoria *pinned* podría ser más rápida; no se probó.)
+4. **Tamaño de bloque.** 128 hilos fue el más rápido (0.598 ms) y 512 el más lento (0.703 ms, ~18 % más que 128). Entre 128 y 256 la diferencia (6.8 %) es comparable al ruido observado entre corridas (~2.5 %), por lo que no es concluyente. **Hipótesis:** con más hilos el árbol tiene más pasos y más hilos ociosos; no se perfiló.
+5. **Precisión en `float32`** (sección 3): se confirmó que para $N > 2^{24}$ el acumulador único del ingenuo se satura y da un resultado **incorrecto**, mientras que el optimizado sigue siendo exacto.
+6. **Conexión con la teoría:** el modelo SIMT y los warps explican por qué muchos hilos esperando la misma dirección no suman rendimiento (Clase 5); la jerarquía de memoria, la memoria compartida y la coalescencia explican la mejora del optimizado (Clase 6); la reducción en árbol y el perfilado con Nsight Compute (Clase 7).
 
 ---
 
 ## 8. Instrucciones de ejecución
 
-**En Google Colab (recomendado, no hace falta placa NVIDIA propia):**
-1. Abrir `colab_hito2.ipynb` (en Colab: *Archivo → Abrir cuaderno → GitHub* y pegar la URL del repo, o subir el archivo).
+**En Google Colab (no hace falta placa NVIDIA propia):**
+1. Abrir `colab_hito2.ipynb` (*Archivo → Abrir cuaderno → GitHub*, rama `laura-hito2`).
 2. *Entorno de ejecución → Cambiar tipo de entorno de ejecución → GPU (T4)*.
-3. Ejecutar las celdas en orden. Descargar los resultados antes de cerrar la sesión.
+3. Ejecutar las celdas en orden y descargar los resultados antes de cerrar la sesión.
 
 **Sin GPU (solo para validar la lógica), con el simulador de Numba:**
 
 ```bash
 pip install numba numpy matplotlib
-NUMBA_ENABLE_CUDASIM=1 python kernel_optimizado.py 4096 2      # en Windows PowerShell: $env:NUMBA_ENABLE_CUDASIM=1
-NUMBA_ENABLE_CUDASIM=1 python benchmark_gpu.py --n 2048 4096 --reps 2 --threads 32 64
+NUMBA_ENABLE_CUDASIM=1 python kernel_optimizado.py 4096 2      # en PowerShell: $env:NUMBA_ENABLE_CUDASIM=1
 ```
 
-El simulador corre cada hilo de CUDA en CPU: sirve para comprobar que el resultado es correcto, **los tiempos no representan a la GPU**.
+El simulador corre cada hilo de CUDA en CPU: sirve para comprobar que el resultado es correcto; los tiempos no representan a la GPU.
 
 **Con GPU NVIDIA local:**
 
@@ -140,22 +142,23 @@ python graficar_gpu.py resultados_gpu.csv speedup_gpu.png
 
 | Archivo | Rol |
 | :--- | :--- |
-| `kernels.py` | Kernels `suma_atomica` y `reduce_shared`, y la función de medición con `cuda.event`. |
+| `kernels.py` | Kernels `suma_atomica` y `reduce_shared`, y la medición con `cuda.event`. |
 | `kernel_ingenuo.py`, `kernel_optimizado.py` | Ejecutan cada versión y validan el resultado. |
 | `benchmark_gpu.py` | Compara CPU vs. GPU ingenua vs. optimizada; barrido de hilos por bloque; escribe los CSV. |
 | `graficar_gpu.py` | Genera `speedup_gpu.png` desde `resultados_gpu.csv`. |
-| `comun.py` | Vector de unos, validación de la suma y descripción del entorno (GPU y versión de Numba). |
-| `colab_hito2.ipynb` | Reproduce todo en Colab, de punta a punta. |
-| `informe-hito2-plantilla.md` | Plantilla del informe de 1–2 páginas. |
+| `comun.py` | Vector de unos, validación de la suma y descripción del entorno. |
+| `colab_hito2.ipynb` | Reproduce todo en Colab. |
+| `resultados_gpu.txt/.csv`, `resultados_threads.csv`, `speedup_gpu.png` | Salidas medidas en Colab. |
+| `ingenuo.ncu-rep`, `optimizado.ncu-rep` | Reportes de Nsight Compute. |
+| `informe-hito2.pdf/.docx/.md` | Informe de 2 páginas. |
 
 ---
 
 ## 10. Criterio de "listo"
 
-- [x] Ambas versiones implementadas y verificadas con `validar_suma` con tamaños chicos en CPU (simulador).
+- [x] Ambas versiones corren en GPU real (Tesla T4) con `Checksum Válido: SÍ` para $N \le 2^{24}$.
 - [x] Técnica visible en el código optimizado (memoria compartida + árbol + carga coalescida).
-- [ ] Corrida en GPU real: ambas versiones con `Checksum Válido: SÍ`.
-- [ ] Tabla de tiempos propia (sección 5) con GPU y versión de Numba declaradas.
-- [ ] Dato de perfilado (sección 6) o limitación declarada con el error pegado.
-- [ ] Análisis (sección 7) escrito con los datos medidos.
-- [ ] Informe de 1–2 páginas (CPU Hito 1 vs. GPU ingenua vs. GPU optimizada).
+- [x] Tabla de tiempos propia con GPU y versión de Numba declaradas (mediana de 9, calentamiento descartado).
+- [x] Datos de perfilado con Nsight Compute para ambos kernels.
+- [x] Análisis con los datos medidos y conexión con las Clases 5–7.
+- [x] Informe de 2 páginas: CPU del Hito 1 vs. GPU ingenua vs. GPU optimizada.
